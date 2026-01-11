@@ -1,0 +1,458 @@
+openapi: 3.0.3
+info:
+  title: Firecrawl API Integration
+  description: |
+    API contract for integrating with Firecrawl local service at http://localhost:3002.
+    This contract defines the endpoints used by the VBA documentation crawler.
+  version: 1.0.0
+  contact:
+    name: Firecrawl Documentation
+    url: https://docs.firecrawl.dev
+
+servers:
+  - url: http://localhost:3002
+    description: Local Firecrawl service
+  - url: https://api.firecrawl.dev
+    description: Firecrawl cloud API (fallback)
+
+paths:
+  /v2/crawl:
+    post:
+      summary: Submit crawl job
+      description: |
+        Submits a crawl job to recursively crawl a URL and all accessible subpages.
+        Returns a job ID for async status checking.
+      operationId: submitCrawlJob
+      tags:
+        - Crawl
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: Starting URL to crawl
+                  example: https://dict.thinktrader.net/VBA/start_now.html
+                limit:
+                  type: integer
+                  minimum: 1
+                  maximum: 10000
+                  description: Maximum number of pages to crawl
+                  default: 100
+                  example: 200
+                scrapeOptions:
+                  type: object
+                  description: Options for scraping each page
+                  properties:
+                    formats:
+                      type: array
+                      items:
+                        type: string
+                        enum: [markdown, html, extracted-content]
+                      description: Output formats to request
+                      default: ["markdown"]
+                      example: ["markdown", "html"]
+                    onlyMainContent:
+                      type: boolean
+                      description: Extract only main content, skip navigation/footers
+                      default: true
+                    includeTags:
+                      type: array
+                      items:
+                        type: string
+                      description: HTML tags to include in extraction
+                    excludeTags:
+                      type: array
+                      items:
+                        type: string
+                      description: HTML tags to exclude from extraction
+      responses:
+        '200':
+          description: Crawl job submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - id
+                  - url
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  id:
+                    type: string
+                    description: Unique job identifier
+                    example: "123-456-789"
+                  url:
+                    type: string
+                    format: uri
+                    description: URL to check job status
+                    example: "http://localhost:3002/v2/crawl/123-456-789"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v2/crawl/{job_id}:
+    get:
+      summary: Check crawl job status
+      description: |
+        Retrieves the current status and results of a crawl job.
+        Returns completed pages when job is finished.
+      operationId: getCrawlJobStatus
+      tags:
+        - Crawl
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Job ID from crawl submission
+          example: "123-456-789"
+      responses:
+        '200':
+          description: Job status retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - status
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  status:
+                    type: string
+                    enum: [pending, processing, completed, failed, cancelled]
+                    description: Current job status
+                    example: "completed"
+                  total:
+                    type: integer
+                    description: Total number of pages discovered
+                    example: 150
+                  completed:
+                    type: integer
+                    description: Number of pages successfully processed
+                    example: 145
+                  data:
+                    type: array
+                    description: Array of scraped pages (available when status is 'completed')
+                    items:
+                      $ref: '#/components/schemas/ScrapedPage'
+                  error:
+                    type: string
+                    description: Error message if status is 'failed'
+                    example: "Connection timeout"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Job not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /v2/scrape:
+    post:
+      summary: Scrape single URL
+      description: |
+        Scrapes a single URL and returns its content in the specified formats.
+        Used for single-page conversion (fallback when crawl is not needed).
+      operationId: scrapeUrl
+      tags:
+        - Scrape
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: URL to scrape
+                  example: https://dict.thinktrader.net/VBA/start_now.html
+                formats:
+                  type: array
+                  items:
+                    type: string
+                    enum: [markdown, html, extracted-content, screenshot]
+                  description: Output formats to request
+                  default: ["markdown"]
+                  example: ["markdown", "html"]
+                onlyMainContent:
+                  type: boolean
+                  description: Extract only main content
+                  default: true
+      responses:
+        '200':
+          description: URL scraped successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - data
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    $ref: '#/components/schemas/ScrapedPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /v2/map:
+    post:
+      summary: Map website URLs
+      description: |
+        Discovers and returns URLs present on a website.
+        Used for link discovery when manual control is needed.
+      operationId: mapWebsite
+      tags:
+        - Map
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - url
+              properties:
+                url:
+                  type: string
+                  format: uri
+                  description: Base URL to map
+                  example: https://dict.thinktrader.net/VBA/
+                search:
+                  type: string
+                  description: Optional search query to filter URLs
+                  example: "functions"
+      responses:
+        '200':
+          description: Website mapped successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - success
+                  - links
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  links:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                        - url
+                        - title
+                      properties:
+                        url:
+                          type: string
+                          format: uri
+                          example: https://dict.thinktrader.net/VBA/functions.html
+                        title:
+                          type: string
+                          example: "VBA Functions Reference"
+                        description:
+                          type: string
+                          example: "Complete reference for VBA functions"
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: API Key
+      description: |
+        Firecrawl API key for authentication.
+        For local service, any key may work (e.g., "fc-test").
+        For cloud service, use actual API key from Firecrawl dashboard.
+
+  schemas:
+    ScrapedPage:
+      type: object
+      required:
+        - markdown
+        - metadata
+      properties:
+        markdown:
+          type: string
+          description: Page content converted to Markdown
+          example: |
+            # VBA Functions Reference
+
+            This guide covers all built-in VBA functions...
+
+        html:
+          type: string
+          description: Original HTML content (if requested in formats)
+        metadata:
+          type: object
+          description: Page metadata
+          required:
+            - title
+            - sourceURL
+          properties:
+            title:
+              type: string
+              example: "VBA Functions Reference"
+            description:
+              type: string
+              example: "Complete reference for VBA functions"
+            sourceURL:
+              type: string
+              format: uri
+              example: "https://dict.thinktrader.net/VBA/functions.html"
+            statusCode:
+              type: integer
+              example: 200
+            language:
+              type: string
+              example: "en"
+            keywords:
+              type: string
+              example: "VBA, functions, reference, documentation"
+            ogTitle:
+              type: string
+            ogDescription:
+              type: string
+            ogImage:
+              type: string
+              format: uri
+
+    Error:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: string
+          description: Human-readable error message
+          example: "Invalid URL format"
+        errorType:
+          type: string
+          enum: [validation_error, authentication_error, rate_limit_error, timeout_error, server_error]
+          example: "validation_error"
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error: "URL is required"
+
+    Unauthorized:
+      description: Authentication failed - invalid or missing API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error: "Invalid API key"
+            errorType: "authentication_error"
+
+    RateLimited:
+      description: Too many requests - rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error: "Rate limit exceeded. Please try again later."
+            errorType: "rate_limit_error"
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until retry is allowed
+          example: 60
+
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error: "Internal server error"
+            errorType: "server_error"
+
+    ServiceUnavailable:
+      description: Firecrawl service is temporarily unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error: "Service temporarily unavailable"
+            errorType: "timeout_error"
+
+tags:
+  - name: Crawl
+    description: Multi-page crawling operations
+  - name: Scrape
+    description: Single-page scraping operations
+  - name: Map
+    description: URL discovery and mapping
